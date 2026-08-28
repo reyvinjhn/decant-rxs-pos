@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { ShoppingCart, Package, Plus, Trash2, Store, Check, AlertCircle, X, Edit2, RefreshCw } from 'lucide-react';
 
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzS7yssv2QRuuLt387B-FX6s7tp3eTOhrBWBK6_VL5hnobuHtw-4qa87Cbj8zrqpSzPfg/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzAhgvfdoAuclg3g-grTwEXuoIqvW7PElX92TjFSyI-7UxoHO92Gb7Sv13faIWIryEYMg/exec";
 
 export default function App() {
   const [inventory, setInventory] = useState([]);
@@ -72,24 +72,17 @@ export default function App() {
   const checkout = async () => {
     if (cart.length === 0) return;
 
-    const updatedInventory = inventory.map(invItem => {
-      const cartMatches = cart.filter(c => c.perfumeId === invItem.id);
-      if (cartMatches.length > 0) {
-        const totalDeducted = cartMatches.reduce((sum, c) => sum + (c.size === '5ml' ? 5 * c.quantity : 10 * c.quantity), 0);
-        return { ...invItem, stockML: Math.max(0, invItem.stockML - totalDeducted) };
-      }
-      return invItem;
-    });
-
-    setInventory(updatedInventory);
-
     try {
       const orderData = {
-        type: "sale",
-        customerName: "Walk-in",
-        itemsOrdered: cart.map(i => `${i.quantity}x ${i.name} (${i.size}) [${i.owner}]`).join(', '),
-        totalAmount: cartTotal,
-        paymentMethod: "Cash"
+        action: "recordSale",
+        purchasedItems: cart.map(i => ({
+          perfumeId: i.perfumeId,
+          name: i.name,
+          size: i.size,
+          price: i.price,
+          quantity: i.quantity,
+          owner: i.owner
+        }))
       };
 
       await fetch(APPS_SCRIPT_URL, {
@@ -98,13 +91,15 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(orderData)
       });
+
+      await fetchInventory();
+      setCart([]);
+      setActiveTab('shop');
+      showNotification('Checkout successful! Logged to Google Sheet.', 'success');
     } catch (err) {
       console.error("Error saving sale to Google Sheets:", err);
+      showNotification("Failed to sync transaction to cloud.", "error");
     }
-
-    setCart([]);
-    setActiveTab('shop');
-    showNotification('Checkout successful! Logged to Google Sheet.', 'success');
   };
 
   const cartTotal = useMemo(() => cart.reduce((total, item) => total + (item.price * item.quantity), 0), [cart]);
@@ -146,7 +141,7 @@ export default function App() {
 
       <main className="max-w-6xl mx-auto px-4 py-8">
         {activeTab === 'shop' && <CustomerView inventory={inventory} onAddToCart={addToCart} onRefresh={fetchInventory} />}
-        {activeTab === 'admin' && <AdminView inventory={inventory} setInventory={setInventory} onRefresh={fetchInventory} />}
+        {activeTab === 'admin' && <AdminView inventory={inventory} setInventory={setInventory} onRefresh={fetchInventory} showNotification={showNotification} />}
         {activeTab === 'cart' && <CartView cart={cart} removeFromCart={removeFromCart} total={cartTotal} checkout={checkout} />}
       </main>
     </div>
@@ -230,41 +225,74 @@ function PerfumeCard({ perfume, onAddToCart }) {
   );
 }
 
-function AdminView({ inventory, setInventory, onRefresh }) {
+function AdminView({ inventory, setInventory, onRefresh, showNotification }) {
   const [newPerfume, setNewPerfume] = useState({ name: '', owner: '', stockML: '', price5ml: '', price10ml: '' });
 
-  const handleAdd = (e) => {
+  const handleAdd = async (e) => {
     e.preventDefault();
     if (!newPerfume.name || !newPerfume.owner || !newPerfume.stockML) return;
 
-    const newItem = {
-      id: Date.now(),
-      name: newPerfume.name,
-      owner: newPerfume.owner,
-      stockML: parseInt(newPerfume.stockML),
-      price5ml: parseFloat(newPerfume.price5ml) || 0,
-      price10ml: parseFloat(newPerfume.price10ml) || 0,
-    };
+    try {
+      await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: "addPerfume",
+          name: newPerfume.name,
+          owner: newPerfume.owner,
+          stockML: newPerfume.stockML,
+          price5ml: newPerfume.price5ml,
+          price10ml: newPerfume.price10ml
+        })
+      });
 
-    setInventory([...inventory, newItem]);
-    setNewPerfume({ name: '', owner: '', stockML: '', price5ml: '', price10ml: '' });
+      showNotification("Item added to Google Sheets Inventory!");
+      setNewPerfume({ name: '', owner: '', stockML: '', price5ml: '', price10ml: '' });
+      setTimeout(onRefresh, 1500);
+    } catch (err) {
+      console.error("Failed to add to sheet:", err);
+      showNotification("Error adding item to sheet.", "error");
+    }
   };
 
-  const handleDelete = (id) => {
-    if (confirm("Remove this fragrance from local view?")) {
-      setInventory(inventory.filter(item => item.id !== id));
+  const handleDelete = async (item) => {
+    if (!confirm(`Are you sure you want to delete ${item.name} from Google Sheets?`)) return;
+
+    try {
+      await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: "deletePerfume",
+          id: item.id,
+          name: item.name
+        })
+      });
+
+      showNotification("Item deleted from Google Sheets!");
+      setTimeout(onRefresh, 1500);
+    } catch (err) {
+      console.error("Failed to delete from sheet:", err);
+      showNotification("Error deleting item.", "error");
     }
   };
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-neutral-900 mb-2">Inventory Management</h1>
-        <p className="text-neutral-500">Live products synced from your Google Sheet.</p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold text-neutral-900 mb-2">Inventory Management</h1>
+          <p className="text-neutral-500">Live products synced from your Google Sheet.</p>
+        </div>
+        <button onClick={onRefresh} className="flex items-center space-x-1 bg-white border border-neutral-300 px-3 py-2 rounded-lg text-sm hover:bg-neutral-50 cursor-pointer">
+          <RefreshCw className="h-4 w-4" /><span>Refresh Inventory</span>
+        </button>
       </div>
 
       <div className="bg-white p-6 rounded-xl shadow-sm border border-neutral-200">
-        <h2 className="text-lg font-bold text-neutral-800 mb-4 flex items-center"><Plus className="h-5 w-5 mr-2" /> Add Temporary Item</h2>
+        <h2 className="text-lg font-bold text-neutral-800 mb-4 flex items-center"><Plus className="h-5 w-5 mr-2" /> Add New Inventory Item</h2>
         <form onSubmit={handleAdd} className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
           <div className="md:col-span-2">
             <label className="block text-sm font-medium text-neutral-700 mb-1">Perfume Name</label>
@@ -287,7 +315,7 @@ function AdminView({ inventory, setInventory, onRefresh }) {
             <input type="number" min="0" value={newPerfume.price10ml} onChange={(e) => setNewPerfume({...newPerfume, price10ml: e.target.value})} className="w-full px-4 py-2 border border-neutral-300 rounded-lg outline-none" placeholder="1500" />
           </div>
           <div className="md:col-span-6 flex justify-end mt-2">
-             <button type="submit" className="bg-neutral-900 text-white px-6 py-2 rounded-lg font-medium hover:bg-neutral-800 cursor-pointer">Add to View</button>
+             <button type="submit" className="bg-neutral-900 text-white px-6 py-2 rounded-lg font-medium hover:bg-neutral-800 cursor-pointer">Add to Sheet</button>
           </div>
         </form>
       </div>
@@ -313,7 +341,9 @@ function AdminView({ inventory, setInventory, onRefresh }) {
                 <td className="p-4 text-neutral-600">₱{item.price5ml?.toLocaleString()}</td>
                 <td className="p-4 text-neutral-600">₱{item.price10ml?.toLocaleString()}</td>
                 <td className="p-4 text-center">
-                  <button onClick={() => handleDelete(item.id)} className="text-neutral-400 hover:text-red-600 p-1 cursor-pointer"><Trash2 className="h-5 w-5" /></button>
+                  <button onClick={() => handleDelete(item)} className="text-neutral-400 hover:text-red-600 p-1 cursor-pointer" title="Delete Item">
+                    <Trash2 className="h-5 w-5" />
+                  </button>
                 </td>
               </tr>
             ))}
