@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { ShoppingCart, Package, Plus, Trash2, Store, Check, AlertCircle, X, Edit2, Link as LinkIcon, RefreshCw } from 'lucide-react';
 
 // PASTE YOUR SHEETDB API URL HERE:
-const SHEETDB_API_URL = "YOUR_SHEETDB_API_URL_HERE"; 
+const SHEETDB_API_URL = import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL || "";
 
 export default function App() {
   const [inventory, setInventory] = useState([]);
