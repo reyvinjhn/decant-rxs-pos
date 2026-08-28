@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { ShoppingCart, Package, Plus, Trash2, Store, Check, AlertCircle, X, Edit2, RefreshCw } from 'lucide-react';
+import { ShoppingCart, Package, Plus, Trash2, Store, Check, AlertCircle, X, Edit2, Link as LinkIcon, RefreshCw } from 'lucide-react';
 
 // PASTE YOUR SHEETDB API URL HERE:
 const SHEETDB_API_URL = "YOUR_SHEETDB_API_URL_HERE"; 
@@ -26,6 +26,7 @@ export default function App() {
     try {
       const res = await fetch(SHEETDB_API_URL);
       const data = await res.json();
+      // Format numbers correctly from string database
       const formatted = data.map(item => ({
         id: Number(item.id),
         name: item.name,
@@ -83,7 +84,7 @@ export default function App() {
   const checkout = async () => {
     if (cart.length === 0) return;
 
-    // 1. Update local inventory state
+    // 1. Update local inventory state and sync with SheetDB
     const updatedInventory = inventory.map(invItem => {
       const cartMatches = cart.filter(c => c.perfumeId === invItem.id);
       if (cartMatches.length > 0) {
@@ -98,7 +99,7 @@ export default function App() {
     // Push updates to Google Sheets via SheetDB API if configured
     if (SHEETDB_API_URL && !SHEETDB_API_URL.includes("YOUR_SHEETDB")) {
       try {
-        // Update stock for each modified item in SheetDB inventory
+        // Update stock for each modified item in SheetDB
         for (const item of updatedInventory) {
           await fetch(`${SHEETDB_API_URL}/id/${item.id}`, {
             method: 'PATCH',
@@ -107,15 +108,14 @@ export default function App() {
           });
         }
 
-        // Log Sale to Sales tab (including explicit breakdown per owner)
+        // Log Sale to Sales tab
         await fetch(`${SHEETDB_API_URL}?sheet=Sales`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             data: [{
               date: new Date().toLocaleString(),
-              items: cart.map(i => `${i.quantity}x ${i.name} (${i.size})`).join(', '),
-              owner: cart.map(i => `${i.quantity}x ${i.owner}`).join(', '),
+              items: cart.map(i => `${i.quantity}x ${i.name} (${i.size}) [Owner: ${i.owner}]`).join(', '),
               totalAmount: cartTotal
             }]
           })
@@ -127,7 +127,7 @@ export default function App() {
 
     setCart([]);
     setActiveTab('shop');
-    showNotification('Checkout successful! Cloud database & sales updated.', 'success');
+    showNotification('Checkout successful! Cloud database updated.', 'success');
   };
 
   const cartTotal = useMemo(() => cart.reduce((total, item) => total + (item.price * item.quantity), 0), [cart]);
@@ -169,7 +169,7 @@ export default function App() {
 
       <main className="max-w-6xl mx-auto px-4 py-8">
         {activeTab === 'shop' && <CustomerView inventory={inventory} onAddToCart={addToCart} onRefresh={fetchInventory} />}
-        {activeTab === 'admin' && <AdminView inventory={inventory} setInventory={setInventory} sheetUrl={SHEETDB_API_URL} />}
+        {activeTab === 'admin' && <AdminView inventory={inventory} setInventory={setInventory} sheetUrl={SHEETDB_API_URL} onRefresh={fetchInventory} />}
         {activeTab === 'cart' && <CartView cart={cart} removeFromCart={removeFromCart} total={cartTotal} checkout={checkout} />}
       </main>
     </div>
@@ -253,7 +253,7 @@ function PerfumeCard({ perfume, onAddToCart }) {
   );
 }
 
-function AdminView({ inventory, setInventory, sheetUrl }) {
+function AdminView({ inventory, setInventory, sheetUrl, onRefresh }) {
   const [newPerfume, setNewPerfume] = useState({ name: '', owner: '', stockML: '', price5ml: '', price10ml: '' });
 
   const handleAdd = async (e) => {
