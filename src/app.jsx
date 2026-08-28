@@ -1,44 +1,32 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { ShoppingCart, Package, Plus, Trash2, Store, Check, AlertCircle, X, Edit2, Link as LinkIcon, RefreshCw } from 'lucide-react';
+import { ShoppingCart, Package, Plus, Trash2, Store, Check, AlertCircle, X, Edit2, RefreshCw } from 'lucide-react';
 
-// PASTE YOUR SHEETDB API URL HERE:
-const SHEETDB_API_URL = import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL || "";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzS7yssv2QRuuLt387B-FX6s7tp3eTOhrBWBK6_VL5hnobuHtw-4qa87Cbj8zrqpSzPfg/exec";
 
 export default function App() {
   const [inventory, setInventory] = useState([]);
   const [cart, setCart] = useState([]);
-  const [activeTab, setActiveTab] = useState('shop'); // 'shop', 'admin', 'cart'
+  const [activeTab, setActiveTab] = useState('shop');
   const [notification, setNotification] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Fetch inventory from Google Sheets on load
   const fetchInventory = async () => {
-    if (!SHEETDB_API_URL || SHEETDB_API_URL.includes("YOUR_SHEETDB")) {
-      // Fallback data if API isn't linked yet
-      setInventory([
-        { id: 1, name: "Baccarat Rouge 540 Extrait", owner: "Decant RXS", stockML: 200, price5ml: 1500, price10ml: 2800 },
-        { id: 2, name: "Creed Aventus", owner: "Decant RXS", stockML: 50, price5ml: 1200, price10ml: 2200 },
-      ]);
-      setIsLoading(false);
-      return;
-    }
-
     try {
-      const res = await fetch(SHEETDB_API_URL);
+      const res = await fetch(APPS_SCRIPT_URL);
       const data = await res.json();
-      // Format numbers correctly from string database
-      const formatted = data.map(item => ({
-        id: Number(item.id),
-        name: item.name,
-        owner: item.owner,
-        stockML: Number(item.stockML),
-        price5ml: Number(item.price5ml),
-        price10ml: Number(item.price10ml),
+      
+      const formatted = data.map((item, idx) => ({
+        id: item.id ? Number(item.id) : idx + 1,
+        name: item.name || item.Name || "Unnamed Fragrance",
+        owner: item.owner || item.Owner || "Decant RXS",
+        stockML: Number(item.stockML || item.StockML || item.stock || 100),
+        price5ml: Number(item.price5ml || item.price5ML || item.Price5ml || 0),
+        price10ml: Number(item.price10ml || item.price10ML || item.Price10ml || 0),
       }));
       setInventory(formatted);
     } catch (err) {
-      console.error("Failed to load inventory", err);
-      showNotification("Could not sync inventory from cloud.", "error");
+      console.error("Failed to load inventory:", err);
+      showNotification("Could not sync inventory from Google Sheets.", "error");
     } finally {
       setIsLoading(false);
     }
@@ -84,7 +72,6 @@ export default function App() {
   const checkout = async () => {
     if (cart.length === 0) return;
 
-    // 1. Update local inventory state and sync with SheetDB
     const updatedInventory = inventory.map(invItem => {
       const cartMatches = cart.filter(c => c.perfumeId === invItem.id);
       if (cartMatches.length > 0) {
@@ -96,38 +83,28 @@ export default function App() {
 
     setInventory(updatedInventory);
 
-    // Push updates to Google Sheets via SheetDB API if configured
-    if (SHEETDB_API_URL && !SHEETDB_API_URL.includes("YOUR_SHEETDB")) {
-      try {
-        // Update stock for each modified item in SheetDB
-        for (const item of updatedInventory) {
-          await fetch(`${SHEETDB_API_URL}/id/${item.id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stockML: item.stockML })
-          });
-        }
+    try {
+      const orderData = {
+        type: "sale",
+        customerName: "Walk-in",
+        itemsOrdered: cart.map(i => `${i.quantity}x ${i.name} (${i.size}) [${i.owner}]`).join(', '),
+        totalAmount: cartTotal,
+        paymentMethod: "Cash"
+      };
 
-        // Log Sale to Sales tab
-        await fetch(`${SHEETDB_API_URL}?sheet=Sales`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            data: [{
-              date: new Date().toLocaleString(),
-              items: cart.map(i => `${i.quantity}x ${i.name} (${i.size}) [Owner: ${i.owner}]`).join(', '),
-              totalAmount: cartTotal
-            }]
-          })
-        });
-      } catch (err) {
-        console.error("Error updating cloud sheets:", err);
-      }
+      await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orderData)
+      });
+    } catch (err) {
+      console.error("Error saving sale to Google Sheets:", err);
     }
 
     setCart([]);
     setActiveTab('shop');
-    showNotification('Checkout successful! Cloud database updated.', 'success');
+    showNotification('Checkout successful! Logged to Google Sheet.', 'success');
   };
 
   const cartTotal = useMemo(() => cart.reduce((total, item) => total + (item.price * item.quantity), 0), [cart]);
@@ -146,13 +123,13 @@ export default function App() {
             <span className="text-xl font-bold tracking-widest uppercase">Decant RXS</span>
           </div>
           <div className="flex space-x-6">
-            <button onClick={() => setActiveTab('shop')} className={`flex items-center space-x-1 ${activeTab === 'shop' ? 'text-amber-400' : 'text-neutral-300'}`}>
+            <button onClick={() => setActiveTab('shop')} className={`flex items-center space-x-1 cursor-pointer ${activeTab === 'shop' ? 'text-amber-400' : 'text-neutral-300'}`}>
               <Store className="h-5 w-5" /><span>Storefront</span>
             </button>
-            <button onClick={() => setActiveTab('admin')} className={`flex items-center space-x-1 ${activeTab === 'admin' ? 'text-amber-400' : 'text-neutral-300'}`}>
+            <button onClick={() => setActiveTab('admin')} className={`flex items-center space-x-1 cursor-pointer ${activeTab === 'admin' ? 'text-amber-400' : 'text-neutral-300'}`}>
               <Edit2 className="h-5 w-5" /><span>Admin</span>
             </button>
-            <button onClick={() => setActiveTab('cart')} className={`flex items-center space-x-1 relative ${activeTab === 'cart' ? 'text-amber-400' : 'text-neutral-300'}`}>
+            <button onClick={() => setActiveTab('cart')} className={`flex items-center space-x-1 relative cursor-pointer ${activeTab === 'cart' ? 'text-amber-400' : 'text-neutral-300'}`}>
               <ShoppingCart className="h-5 w-5" /><span>Cart</span>
               {cartItemCount > 0 && <span className="absolute -top-2 -right-3 bg-amber-500 text-neutral-900 text-xs font-bold px-1.5 py-0.5 rounded-full">{cartItemCount}</span>}
             </button>
@@ -169,7 +146,7 @@ export default function App() {
 
       <main className="max-w-6xl mx-auto px-4 py-8">
         {activeTab === 'shop' && <CustomerView inventory={inventory} onAddToCart={addToCart} onRefresh={fetchInventory} />}
-        {activeTab === 'admin' && <AdminView inventory={inventory} setInventory={setInventory} sheetUrl={SHEETDB_API_URL} onRefresh={fetchInventory} />}
+        {activeTab === 'admin' && <AdminView inventory={inventory} setInventory={setInventory} onRefresh={fetchInventory} />}
         {activeTab === 'cart' && <CartView cart={cart} removeFromCart={removeFromCart} total={cartTotal} checkout={checkout} />}
       </main>
     </div>
@@ -184,7 +161,7 @@ function CustomerView({ inventory, onAddToCart, onRefresh }) {
           <h1 className="text-3xl font-bold text-neutral-900 mb-1">Select Your Fragrance</h1>
           <p className="text-neutral-500">Live inventory synced from Google Sheets.</p>
         </div>
-        <button onClick={onRefresh} className="flex items-center space-x-1 bg-white border border-neutral-300 px-3 py-2 rounded-lg text-sm hover:bg-neutral-50">
+        <button onClick={onRefresh} className="flex items-center space-x-1 bg-white border border-neutral-300 px-3 py-2 rounded-lg text-sm hover:bg-neutral-50 cursor-pointer">
           <RefreshCw className="h-4 w-4" /><span>Sync Stock</span>
         </button>
       </div>
@@ -245,7 +222,7 @@ function PerfumeCard({ perfume, onAddToCart }) {
       </div>
 
       <div className="p-4 bg-neutral-50 border-t border-neutral-100 mt-auto">
-        <button onClick={() => onAddToCart(perfume, selectedSize, currentPrice)} disabled={isOutOfStock || (selectedSize === '10ml' && !canBuy10ml)} className="w-full flex items-center justify-center space-x-2 bg-neutral-900 text-white px-4 py-3 rounded-lg font-medium hover:bg-neutral-800 disabled:bg-neutral-300">
+        <button onClick={() => onAddToCart(perfume, selectedSize, currentPrice)} disabled={isOutOfStock || (selectedSize === '10ml' && !canBuy10ml)} className="w-full flex items-center justify-center space-x-2 bg-neutral-900 text-white px-4 py-3 rounded-lg font-medium hover:bg-neutral-800 disabled:bg-neutral-300 cursor-pointer">
           <ShoppingCart className="h-5 w-5" /><span>Add to Cart - ₱{currentPrice?.toLocaleString()}</span>
         </button>
       </div>
@@ -253,10 +230,10 @@ function PerfumeCard({ perfume, onAddToCart }) {
   );
 }
 
-function AdminView({ inventory, setInventory, sheetUrl, onRefresh }) {
+function AdminView({ inventory, setInventory, onRefresh }) {
   const [newPerfume, setNewPerfume] = useState({ name: '', owner: '', stockML: '', price5ml: '', price10ml: '' });
 
-  const handleAdd = async (e) => {
+  const handleAdd = (e) => {
     e.preventDefault();
     if (!newPerfume.name || !newPerfume.owner || !newPerfume.stockML) return;
 
@@ -265,28 +242,17 @@ function AdminView({ inventory, setInventory, sheetUrl, onRefresh }) {
       name: newPerfume.name,
       owner: newPerfume.owner,
       stockML: parseInt(newPerfume.stockML),
-      price5ml: parseFloat(newPerfume.price5ml),
-      price10ml: parseFloat(newPerfume.price10ml),
+      price5ml: parseFloat(newPerfume.price5ml) || 0,
+      price10ml: parseFloat(newPerfume.price10ml) || 0,
     };
 
     setInventory([...inventory, newItem]);
     setNewPerfume({ name: '', owner: '', stockML: '', price5ml: '', price10ml: '' });
-
-    if (sheetUrl && !sheetUrl.includes("YOUR_SHEETDB")) {
-      await fetch(sheetUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: [newItem] })
-      });
-    }
   };
 
-  const handleDelete = async (id) => {
-    if (confirm("Remove this fragrance?")) {
+  const handleDelete = (id) => {
+    if (confirm("Remove this fragrance from local view?")) {
       setInventory(inventory.filter(item => item.id !== id));
-      if (sheetUrl && !sheetUrl.includes("YOUR_SHEETDB")) {
-        await fetch(`${sheetUrl}/id/${id}`, { method: 'DELETE' });
-      }
     }
   };
 
@@ -294,11 +260,11 @@ function AdminView({ inventory, setInventory, sheetUrl, onRefresh }) {
     <div className="space-y-8">
       <div>
         <h1 className="text-3xl font-bold text-neutral-900 mb-2">Inventory Management</h1>
-        <p className="text-neutral-500">Changes made here sync automatically to your cloud Google Sheet.</p>
+        <p className="text-neutral-500">Live products synced from your Google Sheet.</p>
       </div>
 
       <div className="bg-white p-6 rounded-xl shadow-sm border border-neutral-200">
-        <h2 className="text-lg font-bold text-neutral-800 mb-4 flex items-center"><Plus className="h-5 w-5 mr-2" /> Add New Fragrance</h2>
+        <h2 className="text-lg font-bold text-neutral-800 mb-4 flex items-center"><Plus className="h-5 w-5 mr-2" /> Add Temporary Item</h2>
         <form onSubmit={handleAdd} className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
           <div className="md:col-span-2">
             <label className="block text-sm font-medium text-neutral-700 mb-1">Perfume Name</label>
@@ -309,19 +275,19 @@ function AdminView({ inventory, setInventory, sheetUrl, onRefresh }) {
             <input type="text" required value={newPerfume.owner} onChange={(e) => setNewPerfume({...newPerfume, owner: e.target.value})} className="w-full px-4 py-2 border border-neutral-300 rounded-lg outline-none" placeholder="Decant RXS" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-neutral-700 mb-1">Total Life (ML)</label>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">Total (ML)</label>
             <input type="number" required min="1" value={newPerfume.stockML} onChange={(e) => setNewPerfume({...newPerfume, stockML: e.target.value})} className="w-full px-4 py-2 border border-neutral-300 rounded-lg outline-none" placeholder="100" />
           </div>
           <div>
             <label className="block text-sm font-medium text-neutral-700 mb-1">5ml Price</label>
-            <input type="number" required min="0" value={newPerfume.price5ml} onChange={(e) => setNewPerfume({...newPerfume, price5ml: e.target.value})} className="w-full px-4 py-2 border border-neutral-300 rounded-lg outline-none" placeholder="800" />
+            <input type="number" min="0" value={newPerfume.price5ml} onChange={(e) => setNewPerfume({...newPerfume, price5ml: e.target.value})} className="w-full px-4 py-2 border border-neutral-300 rounded-lg outline-none" placeholder="800" />
           </div>
           <div>
             <label className="block text-sm font-medium text-neutral-700 mb-1">10ml Price</label>
-            <input type="number" required min="0" value={newPerfume.price10ml} onChange={(e) => setNewPerfume({...newPerfume, price10ml: e.target.value})} className="w-full px-4 py-2 border border-neutral-300 rounded-lg outline-none" placeholder="1500" />
+            <input type="number" min="0" value={newPerfume.price10ml} onChange={(e) => setNewPerfume({...newPerfume, price10ml: e.target.value})} className="w-full px-4 py-2 border border-neutral-300 rounded-lg outline-none" placeholder="1500" />
           </div>
           <div className="md:col-span-6 flex justify-end mt-2">
-             <button type="submit" className="bg-neutral-900 text-white px-6 py-2 rounded-lg font-medium hover:bg-neutral-800">Save to Cloud Sheet</button>
+             <button type="submit" className="bg-neutral-900 text-white px-6 py-2 rounded-lg font-medium hover:bg-neutral-800 cursor-pointer">Add to View</button>
           </div>
         </form>
       </div>
@@ -347,7 +313,7 @@ function AdminView({ inventory, setInventory, sheetUrl, onRefresh }) {
                 <td className="p-4 text-neutral-600">₱{item.price5ml?.toLocaleString()}</td>
                 <td className="p-4 text-neutral-600">₱{item.price10ml?.toLocaleString()}</td>
                 <td className="p-4 text-center">
-                  <button onClick={() => handleDelete(item.id)} className="text-neutral-400 hover:text-red-600 p-1"><Trash2 className="h-5 w-5" /></button>
+                  <button onClick={() => handleDelete(item.id)} className="text-neutral-400 hover:text-red-600 p-1 cursor-pointer"><Trash2 className="h-5 w-5" /></button>
                 </td>
               </tr>
             ))}
@@ -382,7 +348,7 @@ function CartView({ cart, removeFromCart, total, checkout }) {
               </div>
               <div className="flex items-center space-x-6">
                 <span className="font-bold text-lg">₱{(item.price * item.quantity).toLocaleString()}</span>
-                <button onClick={() => removeFromCart(item.id)} className="text-neutral-400 hover:text-red-600"><X className="h-5 w-5" /></button>
+                <button onClick={() => removeFromCart(item.id)} className="text-neutral-400 hover:text-red-600 cursor-pointer"><X className="h-5 w-5" /></button>
               </div>
             </li>
           ))}
@@ -392,7 +358,7 @@ function CartView({ cart, removeFromCart, total, checkout }) {
           <span className="text-2xl font-bold text-neutral-900">₱{total.toLocaleString()}</span>
         </div>
       </div>
-      <button onClick={checkout} className="w-full bg-amber-500 hover:bg-amber-600 text-neutral-900 text-lg font-bold py-4 rounded-xl shadow-sm flex justify-center items-center space-x-2">
+      <button onClick={checkout} className="w-full bg-amber-500 hover:bg-amber-600 text-neutral-900 text-lg font-bold py-4 rounded-xl shadow-sm flex justify-center items-center space-x-2 cursor-pointer transition-colors">
         <Check className="h-6 w-6" /><span>Complete Checkout & Sync Cloud</span>
       </button>
     </div>
